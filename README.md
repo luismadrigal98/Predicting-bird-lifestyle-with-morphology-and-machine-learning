@@ -7,11 +7,17 @@ The paper evaluates whether categories of primary lifestyle are suitable for spl
 The analysis steps include:
 
 Data cleaning and preparation
+
 Univariate analyses to explore individual trait differences
+
 Principal components analysis for dimensionality reduction
+
 Correlation analysis to detect highly collinear variables
+
 Training three models with different variable sets
+
 10-fold cross-validation for hyperparameter tuning
+
 Assessing and comparing model accuracy and performance
 
 The best model achieved 84% accuracy in predicting primary lifestyle. The paper provides evidence that primary lifestyle can be predicted from morphology and evaluates the utility of these ecological categories for birds.
