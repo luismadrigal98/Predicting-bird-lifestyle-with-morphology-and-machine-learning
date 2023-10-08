@@ -1,0 +1,1182 @@
+## *****************************************************************************
+## Ecology parameters of bird life predicted through morphological traits
+## _____________________________________________________________________________
+
+## *****************************************************************************
+## 1) Loading the required packages ----
+## _____________________________________________________________________________
+
+library(ggplot2)
+library(GGally)
+library(gplots)
+library(readxl)
+library(dplyr)
+library(nortest)
+library(ggpubr)
+library(AMR)
+library(ggforce)
+library(ggdist)
+library(ggthemes)
+library(tidyverse)
+library(tidyquant)
+library(coin)
+library(rcompanion)
+library(caret)
+library(visdat)
+library(recipes)
+library(corrr)
+library(rsample)
+library(gbm)
+library(xgboost)
+library(vip)
+library(h2o)
+library(gridExtra)
+library(DALEX)
+library(nnet)
+library(MASS)
+library(NbClust)
+library(scales)
+
+## *****************************************************************************
+## 2) Setting the work directory ----
+## _____________________________________________________________________________
+
+setwd(dir = "D:/00_KU/My personal work/Primary Lyfestyle Birds/Directory")
+
+## *****************************************************************************
+## 3) Importing the data set ----
+## _____________________________________________________________________________
+
+Data <- read_xlsx(path = "D:\\00_KU\\My personal work\\Primary Lyfestyle Birds\\Data.xlsx", 
+                  sheet = 2, col_names = T)
+
+# ¬ Variable selection step ----
+
+Data <- Data[, c("Primary.Lifestyle", "Beak.Length_Culmen" ,"Beak.Length_Nares", 
+                 "Beak.Width", "Beak.Depth", "Tarsus.Length", "Wing.Length",      
+                 "Kipps.Distance", "Secondary1", "Hand-Wing.Index", 
+                 "Tail.Length", "Mass")]
+
+## |¬ Changing the type of variable where it is necessary ----
+
+Data <-  Data |> 
+  mutate(Primary.Lifestyle = as.factor(Primary.Lifestyle))
+
+## |¬ Eliminating rows with NA observations ----
+
+Data <- na.omit(object = Data)
+
+## *****************************************************************************
+## 4) Exploratory Data Analysis ----
+## _____________________________________________________________________________
+
+## |¬ Looking for normality ----
+
+for.normality <- as.matrix(Data[, -1])
+
+colnames(for.normality) <- names(Data[, -1])
+
+normality <- apply(X = for.normality, MARGIN = 2, FUN = lillie.test)
+
+apply(X = as.matrix(Data[, -1]), MARGIN = 2, 
+      FUN = ggqqplot)
+
+skew <- apply(X = as.matrix(Data[, -1]), MARGIN = 2, 
+              FUN = skewness)
+
+## All the predictors are non normal and right skewed.
+
+## |¬ Comparison between factor levels in function of morphological data ----
+
+Factors <- list(Primary.Lifestyle = Data$Primary.Lifestyle)
+
+Predictors <- list(Beak.Length_Culmen = Data$Beak.Length_Culmen,
+                   Beak.Length_Nares = Data$Beak.Length_Nares,
+                   Beak.Width = Data$Beak.Width,
+                   Beak.Depth = Data$Beak.Depth,
+                   Tarsus.Length = Data$Tarsus.Length,
+                   Wing.Length = Data$Wing.Length,
+                   Kipps.Distance = Data$Kipps.Distance,
+                   Secondary1 = Data$Secondary1,
+                   Hand_Wing.Index = Data$`Hand-Wing.Index`,
+                   Tail.Length = Data$Tail.Length,
+                   Mass = Data$Mass)
+
+Comparator.kruskal <- function(predictors, factors)
+{
+  results <- list();
+  
+  for (i in names(factors)) 
+  {
+    for (j in names(predictors)) 
+    {
+      results[[paste0(i,"_vs_",j)]] <- kruskal.test(x = predictors[[j]], 
+                                                    g = factors[[i]])
+    }
+  }
+  
+  results;
+}
+
+Comparisons <- Comparator.kruskal(predictors = Predictors, factors = Factors)
+
+## Comparisons using premutation tests ----
+
+Comparator.p <- function(predictors, factors)
+{
+  results <- list();
+  
+  for (i in names(factors)) 
+  {
+    for (j in names(predictors)) 
+    {
+      Data <- data.frame(X = predictors[[j]], G = factors[[i]])
+      
+      results[[paste0(i,"_vs_",j)]] <- 
+        independence_test(X ~ G, 
+                          Data, 
+                          distribution = approximate(nresample = 10000L))
+    }
+  }
+  
+  results;
+}
+
+Comparisons.p <- Comparator.p(predictors = Predictors, 
+                              factors = Factors)
+
+## Post hoc test ----
+
+PostHoc.p <- function(predictors, factors, adj = "fdr")
+{
+  results <- list();
+  
+  for (i in names(factors)) 
+  {
+    for (j in names(predictors)) 
+    {
+      Data <- data.frame(X = predictors[[j]], G = factors[[i]])
+      
+      Data.result <- pairwisePermutationTest(X ~ G, 
+                                             data = Data,
+                                             method = adj,
+                                             distribution = 
+                                               approximate(nresample = 10000L))
+      
+      results[[paste0(i,"_vs_",j)]][["Test"]] <- Data.result
+      
+      results[[paste0(i,"_vs_",j)]][["Letters"]] <- 
+        cldList(p.adj ~ Comparison, 
+                data = Data.result, 
+                threshold = 0.05)
+    }
+  }
+  
+  results;
+}
+
+PostHoc.results <- PostHoc.p(predictors = Predictors, factors = Factors)
+
+## Let's make a graph to visualize the differences between primary lifestyles.
+
+Graficator.comparisons <- function(predictors, factors, exclude.log)
+{
+  plots <- list();
+  
+  for (i in names(factors)) 
+  {
+    for (j in names(predictors)) 
+    {
+      if(j %in% exclude.log)
+      {
+        Data <- data.frame(X = factors[[i]], 
+                           Y = predictors[[j]])
+      }
+      
+      else Data <- data.frame(X = factors[[i]], 
+                              Y = log(predictors[[j]]))
+      
+      plots[[paste0(i,"_vs_",j)]] <- ggplot(data = Data, 
+                                            mapping = aes(x = X, 
+                                                          y = Y,
+                                                          fill = X)) +
+        stat_halfeye(justification = -0.18, .width = 0, show.legend = F) +
+        geom_boxplot(alpha = .5, show.legend = F, outlier.fill = NA, 
+                     outlier.colour = NA, width = .3) +
+        scale_fill_tq() +
+        scale_color_tq() +
+        theme_tq() +
+        labs(x = i,
+             y = j,
+             fill = i) +
+        coord_flip() +
+        theme(panel.grid = element_blank())
+    }
+  }
+  
+  plots;
+}
+
+Plots <- Graficator.comparisons(predictors = Predictors, 
+                                factors = Factors,
+                                exclude.log = c("Hand_Wing.Index",
+                                                "Wing.Length"))
+
+## *****************************************************************************
+## 5) Preparing data for modeling ----
+## _____________________________________________________________________________
+
+set.seed(1998) ## For replicability
+
+split <- initial_split(data = Data, 
+                       prop = .7, strata = Primary.Lifestyle)
+
+Training <- training(split)
+
+Testing <- testing(split)
+
+## *****************************************************************************
+## 6) Tuning of data for machine learning processing ----
+## _____________________________________________________________________________
+
+## Set 1: Principal components ----
+
+## Feature engineering step
+
+LJMR.print <- recipe(Primary.Lifestyle ~ Beak.Length_Culmen + 
+                       Beak.Length_Nares + Beak.Width + Beak.Depth + 
+                       Tarsus.Length + Wing.Length + 
+                       Kipps.Distance + Secondary1 + `Hand-Wing.Index` + 
+                       Tail.Length + Mass, data = Data) |>
+  step_center(all_numeric()) |>
+  step_scale(all_numeric()) |>
+  step_pca(all_numeric())
+
+prepare <- prep(LJMR.print, training = Training)
+
+baked.training <- bake(prepare, new_data = Training)
+
+baked.testing <- bake(prepare, new_data = Testing)
+
+## |¬ Calculating the convex hulls for every primary lifestyle
+
+space.extractor <- function(data, factor.levels, PC.vector.names)
+{
+  results <- list();
+  
+  for (i in factor.levels) 
+  {
+    results[[paste0(i, ".space")]] <- as.matrix(data[data$Primary.Lifestyle == i, 
+                                                     PC.vector.names])
+  }
+  
+  results;
+}
+
+Lifestyles.spaces <- space.extractor(data = baked.training, 
+                                     factor.levels = 
+                                       levels(baked.training$Primary.Lifestyle), 
+                                     PC.vector.names = c("PC1", "PC2", "PC3"))
+
+chull.extractor.2 <- function(space.list)
+{
+  results <- list();
+  
+  for (i in names(space.list)) 
+  {
+    results[[i]] <- chull(space.list[[i]][,1:2])
+  }
+  
+  results
+}
+
+chulls.r <- chull.extractor.2(Lifestyles.spaces)
+
+data.chull.constructor <- function(index.list, coor.list)
+{
+  results <- data.frame(PC1 = coor.list[[1]][index.list[[1]], 1],
+                        PC2 = coor.list[[1]][index.list[[1]], 2],
+                        PC3 = coor.list[[1]][index.list[[1]], 3],
+                        PLS = rep(names(index.list[1]), 
+                                  length(index.list[[1]])));
+  
+  for (i in names(index.list)[-1]) 
+  {
+    results <- rbind2(results, 
+                      data.frame(PC1 = coor.list[[i]][index.list[[i]], 1],
+                                 PC2 = coor.list[[i]][index.list[[i]], 2],
+                                 PC3 = coor.list[[i]][index.list[[i]], 3],
+                                 PLS = rep(i, length(index.list[[i]])))) 
+  }
+  
+  results;
+}
+
+unified.chull.data <- data.chull.constructor(index.list = chulls.r, 
+                                             coor.list = Lifestyles.spaces)
+
+
+
+unified.chull.data$PLS <- factor(unified.chull.data$PLS)
+
+levels(unified.chull.data$PLS) <- levels(baked.training$Primary.Lifestyle)
+
+## |¬ Plotting the PCA results in a bidimensional space (only training)
+
+ggplot(data = data.frame(PLS = baked.training$Primary.Lifestyle,
+                         PC1 = baked.training$PC1,
+                         PC2 = baked.training$PC2), mapping = aes(x = PC1,
+                                                                  y = PC2,
+                                                                  fill = PLS,
+                                                                  color = PLS,
+                                                                  group = PLS)) +
+  geom_polygon(mapping = aes(x = PC1,
+                             y = PC2,
+                             fill = PLS,
+                             group = PLS,
+                             color = PLS), show.legend = F, 
+               data = unified.chull.data, alpha = .4) +
+  geom_point(shape = "circle filled") +
+  scale_fill_tq() +
+  scale_color_tq() +
+  theme_tq() +
+  theme(panel.grid = element_blank(), 
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 20),
+        legend.text = element_text(size = 12))
+
+standalone.PCA <- prcomp(scale(Data[,-1]))
+summary(standalone.PCA)
+
+## Plotting the combination of every PC ----
+
+# Define a custom function to add ellipses
+
+my_fn <- function(data, mapping, ...){
+  p <- ggplot(data = data, mapping = mapping) +
+    stat_ellipse(type = "norm")
+  p
+}
+
+ggpairs(baked.training, columns = 2:length(names(baked.training)), 
+        ggplot2::aes(color = Primary.Lifestyle),
+        upper = list(continuous = "points"),
+        lower = list(continuous = wrap(my_fn)), legend = 2) +
+  scale_fill_tq() +
+  scale_color_tq() +
+  theme_tq() +
+  theme(panel.grid = element_blank(), 
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 20),
+        legend.text = element_text(size = 12))
+
+## Set 2: Data centered and scaled without highly correlated variables ----
+
+## Feature engineering step
+
+LJMR.print.2 <- recipe(Primary.Lifestyle ~ Beak.Length_Culmen + 
+                         Beak.Length_Nares + Beak.Width + Beak.Depth + 
+                         Tarsus.Length + Wing.Length + 
+                         Kipps.Distance + Secondary1 + `Hand-Wing.Index` + 
+                         Tail.Length + Mass, data = Data) |>
+  step_center(all_numeric()) |>
+  step_scale(all_numeric())
+
+prepare.2 <- prep(LJMR.print.2, training = Training)
+
+baked.training.2 <- bake(prepare.2, new_data = Training)
+
+baked.testing.2 <- bake(prepare.2, new_data = Testing)
+
+## Set 3: Data centered and scaled with all variables ----
+
+LJMR.print.3 <- recipe(Primary.Lifestyle ~ Beak.Length_Culmen + 
+                         Beak.Length_Nares + Beak.Width + Beak.Depth + 
+                         Tarsus.Length + Wing.Length + 
+                         Kipps.Distance + Secondary1 + `Hand-Wing.Index` + 
+                         Tail.Length + Mass, data = Data) |>
+  step_center(all_numeric()) |>
+  step_scale(all_numeric())
+
+prepare.3 <- prep(LJMR.print.3, training = Training)
+
+baked.training.3 <- bake(prepare.3, new_data = Training)
+
+baked.testing.3 <- bake(prepare.3, new_data = Testing)
+
+## *****************************************************************************
+## 7) Modeling ----
+## _____________________________________________________________________________
+
+## 7.1) Working only with the PCA components from 1 to 5 (Set 1) ----
+
+## |¬ Defining a extreme gradient boosting model of classification (only PC 1-5)
+
+xgb.training.features <- xgb.DMatrix(data = as.matrix(baked.training[, -1]))
+setinfo(object = xgb.training.features, name = 'label', 
+        info = as.numeric(as.data.frame(baked.training)[, 1]) - 1)
+
+## Selecting the best hyperparameters (1)
+
+hyper_grid1 <-  expand.grid(num_class = 5, booster = "gbtree",
+                            eta = c(.1, .2, .4, .6, .8),
+                            max_depth = c(2, 4, 6, 8, 10),
+                            min_child_weight = c(.1, .5, 1, 2, 4),
+                            alpha = 0,
+                            lambda = 0,
+                            gamma = 0,
+                            objective = "multi:softmax",
+                            merror = 0,
+                            trees = 0)
+
+par.selector <- function(hyper_grid, data)
+{
+  for(i in seq_len(nrow(hyper_grid)))
+  {
+    m <- xgb.cv(params = list(num_class = hyper_grid[["num_class"]][i],
+                              booster = "gbtree",
+                              eta = hyper_grid[["eta"]][i],
+                              max_depth = hyper_grid[["max_depth"]][i],
+                              min_child_weight = 
+                                hyper_grid[["min_child_weight"]][i],
+                              alpha = hyper_grid[["alpha"]][i],
+                              lambda = hyper_grid[["lambda"]][i],
+                              gamma = hyper_grid[["gamma"]][i],
+                              objective = hyper_grid[["objective"]][[i]]), 
+                data = data, 
+                nrounds = 4000, 
+                nfold = 10,
+                prediction = T,
+                showsd = T,
+                stratified = T,
+                verbose = T,
+                early_stopping_rounds = 50,
+                metrics = "merror", 
+                nthread = 3)
+    
+    hyper_grid$merror[i] <- min(m$evaluation_log$test_merror_mean)
+    hyper_grid$trees[i] <- m$best_iteration
+  }
+  
+  hyper_grid
+}
+
+test <- par.selector(hyper_grid = hyper_grid1, data = xgb.training.features)
+
+best.par1 <- test |> arrange(merror)
+best.par1 <- best.par1[1,]
+
+## Tuning and selecting the best hyperparameters (2)
+
+hyper_grid2 <-  expand.grid(num_class = 5, booster = "gbtree",
+                            eta = best.par1[, "eta"],
+                            max_depth = best.par1[, "max_depth"],
+                            min_child_weight = best.par1[, "min_child_weight"],
+                            alpha = c(0, 1, 10, 100),
+                            lambda = c(0, .01, 1, 100, 1000),
+                            gamma = c(0, .01, 1, 100, 1000),
+                            objective = "multi:softmax",
+                            merror = 0,
+                            trees = 0)
+
+test2 <- par.selector(hyper_grid = hyper_grid2, data = xgb.training.features)
+
+best.par2 <- test2 |> arrange(merror)
+best.par2 <- best.par2[1,]
+
+## Tuning and selecting the best hyperparameters (3)
+
+hyper_grid3 <-  expand.grid(num_class = 5, booster = "gbtree",
+                            eta = c(.01, .1, .2),
+                            max_depth = c(8, 10, 12),
+                            min_child_weight = 1,
+                            alpha = best.par2[, "alpha"],
+                            lambda = best.par2[, "lambda"],
+                            gamma = best.par2[, "gamma"],
+                            objective = "multi:softmax",
+                            merror = 0,
+                            trees = 0)
+
+test3 <- par.selector(hyper_grid = hyper_grid3, data = xgb.training.features)
+
+best.par3 <- test3 |> arrange(merror)
+best.par3 <- best.par3[1,]
+
+## The best combination is:
+
+param <- list(
+  num_class = 5, 
+  booster = "gbtree",
+  eta = .1,
+  max_depth = 10,
+  min_child_weight = 2,
+  alpha = 1,
+  lambda = 1,
+  gamma = 0.01,
+  objective = "multi:softmax",
+  eval_metric = "merror"
+)
+
+## Training the final model
+
+final.model.PCA_based.fit <- xgboost(
+  data = xgb.training.features, 
+  params = param, 
+  nrounds = 4000,
+  verbose = 1)
+
+## Importance of variables
+
+vip(final.model.PCA_based.fit) + 
+  theme_tq() +
+  theme(panel.grid = element_blank())
+
+xgb.importance(model = final.model.PCA_based.fit)
+
+xgb.ggplot.deepness(model = final.model.PCA_based.fit)
+
+## Validation writing the testing set
+
+xgb.testing.features <- xgb.DMatrix(data = as.matrix(baked.testing[, -1]))
+setinfo(object = xgb.testing.features, name = 'label', 
+        info = as.numeric(as.data.frame(baked.testing)[, 1]) - 1)
+
+final.model.PCA_based.fit.validation <- 
+  predict(object = final.model.PCA_based.fit,
+          newdata = xgb.testing.features)
+
+## Genetating a confusion matrix
+
+Real <- as.character(baked.testing$Primary.Lifestyle)
+
+Predicted <- as.factor(final.model.PCA_based.fit.validation)
+
+levels(Predicted) <- levels(baked.testing$Primary.Lifestyle)
+
+Tabulation <- table(Predicted, Real)
+
+cM <- confusionMatrix(Tabulation)
+
+cm.perc <- function(confusionM)
+{
+  table <- confusionM$table;
+  
+  for (i in seq_len(ncol(table))) 
+  {
+    table[,i] <- round(table[,i] / sum(table[,i]), 2)
+  }
+  
+  table
+}
+
+cM.perc <- cm.perc(cM)
+
+heatmap.2(cM.perc, 
+          Rowv = F, 
+          Colv = F, 
+          dendrogram = "none", 
+          col = brewer_pal("seq"), 
+          trace = "none", 
+          breaks = 10, 
+          tracecol = "green", 
+          margins = c(6, 6), 
+          cellnote = round(cM.perc, 2), 
+          notecol = "black", cexRow = 1, cexCol = 1, 
+          keysize = 2, density.info = "none", key = T)
+
+## 7.2) Working without highly correlated variables ----
+
+## Correlation between centered and scaled predictors in training set ----
+
+cor <- correlate(as.data.frame(baked.training.2[, -1]), 
+                 method = "spearman")
+
+cor  |> shave() |> rplot() + 
+  theme(axis.text.x = element_text(angle = - 50, hjust = 0),
+        axis.text = element_text(size = 10))
+
+significative.pairs <- function(corrr.out, umbral = .8)
+{
+  corrr.out <- shave(corrr.out)
+  
+  matx <- as.matrix(x = corrr.out[,2:length(names(corrr.out))])
+  rownames(matx) <- corrr.out$term
+  Colnames <- names(corrr.out)[-1]
+  
+  pairs <- NULL
+  
+  for (i in 1:length(rownames(matx))) 
+  {
+    for (j in 1:length(colnames(matx))) 
+    {
+      if (is.na(matx[i, j])) next
+      else if (matx[i, j] > umbral | matx[i, j] < -umbral) 
+      {
+        var1 <- rownames(matx)[i]
+        var2 <- Colnames[j]
+        pairs <- c(pairs, paste(var1, 
+                                " |and| ", 
+                                var2))
+      }
+    }
+  }
+  
+  pairs;
+}
+
+h.corr.p <- significative.pairs(corrr.out = cor, umbral = .9)
+
+## Removing one of the correlated varaible in each pair
+
+baked.testing.2 <- dplyr::select(baked.testing.2, !c(Secondary1, 
+                                                     Wing.Length, 
+                                                     Beak.Width))
+
+baked.training.2 <- dplyr::select(baked.training.2, !c(Secondary1, 
+                                                       Wing.Length, 
+                                                       Beak.Width))
+
+## |¬ Defining a extreme gradient boosting model of classification (- correlated)
+
+xgb.training.features.2 <- xgb.DMatrix(data = as.matrix(baked.training.2[,-9]))
+setinfo(object = xgb.training.features.2, name = 'label', 
+        info = as.numeric(as.data.frame(baked.training.2)[, 9]) - 1)
+
+## Selecting the best hyperparameters (1)
+
+hyper_grid1.2 <-  expand.grid(num_class = 5, booster = "gbtree",
+                              eta = c(.1, .2, .4, .6, .8),
+                              max_depth = c(2, 4, 6, 8, 10),
+                              min_child_weight = c(.1, .5, 1, 2, 4),
+                              alpha = 0,
+                              lambda = 0,
+                              gamma = 0,
+                              objective = "multi:softmax",
+                              merror = 0,
+                              trees = 0)
+
+test.2 <- par.selector(hyper_grid = hyper_grid1.2, 
+                       data = xgb.training.features.2)
+
+best.par1.2 <- test.2 |> arrange(merror)
+best.par1.2 <- best.par1.2[1,]
+
+## Tuning and selecting the best hyperparameters (2)
+
+hyper_grid2.2 <-  expand.grid(num_class = 5, booster = "gbtree",
+                              eta = best.par1.2[, "eta"],
+                              max_depth = best.par1.2 [, "max_depth"],
+                              min_child_weight = 
+                                best.par1.2 [, "min_child_weight"],
+                              alpha = c(0, 1, 10, 100),
+                              lambda = c(0, .01, 1, 100, 1000),
+                              gamma = c(0, .01, 1, 100, 1000),
+                              objective = "multi:softmax",
+                              merror = 0,
+                              trees = 0)
+
+test2.2 <- par.selector(hyper_grid = hyper_grid2.2, 
+                        data = xgb.training.features.2)
+
+best.par2.2 <- test2.2 |> arrange(merror)
+best.par2.2 <- best.par2.2[1,]
+
+## Tuning and selecting the best hyperparameters (3)
+
+hyper_grid3.2 <-  expand.grid(num_class = 5, booster = "gbtree",
+                              eta = c(.05, .1, .15),
+                              max_depth = 8,
+                              min_child_weight = 2,
+                              alpha = best.par2.2[, "alpha"],
+                              lambda = best.par2.2[, "lambda"],
+                              gamma = best.par2.2[, "gamma"],
+                              objective = "multi:softmax",
+                              merror = 0,
+                              trees = 0)
+
+test3.2 <- par.selector(hyper_grid = hyper_grid3.2, 
+                        data = xgb.training.features.2)
+
+best.par3.2 <- test3.2 |> arrange(merror)
+best.par3.2 <- best.par3.2[1,]
+
+## The best combination is the one of the best.par1.2
+
+param.2 <- list(
+  num_class = 5, 
+  booster = "gbtree",
+  eta = .4,
+  max_depth = 10, 
+  min_child_weight = 1,
+  alpha = 0,
+  lambda = 0,
+  gamma = 0,
+  objective = "multi:softmax",
+  eval_metric = "merror")
+
+## Training the final model
+
+final.model.without.cor.fit <- xgboost(
+  data = xgb.training.features.2, 
+  params = param.2, 
+  nrounds = 4000, 
+  verbose = 1)
+
+## Importance of variables
+
+vip(final.model.without.cor.fit) + 
+  theme_tq() +
+  theme(panel.grid = element_blank())
+
+xgb.importance(model = final.model.without.cor.fit)
+
+xgb.ggplot.deepness(model = final.model.without.cor.fit)
+
+## Validation writing the testing set
+
+xgb.testing.features.2 <- xgb.DMatrix(data = as.matrix(baked.testing.2[, -9])) # <<<<<<
+setinfo(object = xgb.testing.features.2, name = 'label', 
+        info = as.numeric(as.data.frame(baked.testing.2)[, 9]) - 1)
+
+final.model.without.cor.validation.fit <- 
+  predict(object = final.model.without.cor.fit,
+          newdata = xgb.testing.features.2)
+
+## Generating a confusion matrix
+
+Real.2 <- as.character(baked.testing.2$Primary.Lifestyle)
+
+Predicted.2 <- as.factor(final.model.without.cor.validation.fit)
+
+levels(Predicted.2) <- levels(baked.testing.2$Primary.Lifestyle)
+
+Tabulation.2 <- table(Predicted.2, Real.2)
+
+cM.2 <- confusionMatrix(Tabulation.2)
+
+cM.2.perc <- cm.perc(cM.2)
+
+heatmap.2(cM.2.perc, 
+          Rowv = F, 
+          Colv = F, 
+          dendrogram = "none", 
+          col = brewer_pal("seq"), 
+          trace = "none", 
+          breaks = 9, 
+          tracecol = "green", 
+          margins = c(6, 6), 
+          cellnote = round(cM.2.perc, 2), 
+          notecol = "black", cexRow = 1, cexCol = 1, 
+          keysize = 2, density.info = "none", key = F)
+
+## 7.3) Working with all variables ----
+
+## |¬ Defining a extreme gradient boosting model of classification (all)
+
+xgb.training.features.3 <- xgb.DMatrix(data = as.matrix(baked.training.3[, -12]))
+setinfo(object = xgb.training.features.3, name = 'label', 
+        info = as.numeric(as.data.frame(baked.training.3)[, 12]) - 1)
+
+## Selecting the best hyperparameters (1)
+
+hyper_grid1.3 <-  expand.grid(num_class = 5, booster = "gbtree",
+                              eta = c(.1, .2, .4, .6, .8),
+                              max_depth = c(2, 4, 6, 8, 10),
+                              min_child_weight = c(.1, .5, 1, 2, 4),
+                              alpha = 0,
+                              lambda = 0,
+                              gamma = 0,
+                              objective = "multi:softmax",
+                              merror = 0,
+                              trees = 0)
+
+test.3 <- par.selector(hyper_grid = hyper_grid1.3, 
+                       data = xgb.training.features.3)
+
+best.par1.3 <- test.3 |> arrange(merror)
+best.par1.3 <- best.par1.3[1,]
+
+## Tuning and selecting the best hyperparameters (2)
+
+hyper_grid2.3 <-  expand.grid(num_class = 5, booster = "gbtree",
+                              eta = best.par1.3[, "eta"],
+                              max_depth = best.par1.3[, "max_depth"],
+                              min_child_weight = 
+                                best.par1.3[, "min_child_weight"],
+                              alpha = c(0, 1, 10, 100),
+                              lambda = c(0, .01, 1, 100, 1000),
+                              gamma = c(0, .01, 1, 100, 1000),
+                              objective = "multi:softmax",
+                              merror = 0,
+                              trees = 0)
+
+test2.3 <- par.selector(hyper_grid = hyper_grid2.3, 
+                        data = xgb.training.features.3)
+
+best.par2.3 <- test2.3 |> arrange(merror)
+best.par2.3 <- best.par2.3[1,]
+
+## Tuning and selecting the best hyperparameters (3)
+
+hyper_grid3.3 <-  expand.grid(num_class = 5, booster = "gbtree",
+                              eta = c(.35, .4, .45),    
+                              max_depth = c(7, 8, 9),   
+                              min_child_weight = 1,     
+                              alpha = best.par2.3[, "alpha"],
+                              lambda = best.par2.3[, "lambda"],
+                              gamma = best.par2.3[, "gamma"],
+                              objective = "multi:softmax",
+                              merror = 0,
+                              trees = 0)
+
+test3.3 <- par.selector(hyper_grid = hyper_grid3.3, 
+                        data = xgb.training.features.3)
+
+best.par3.3 <- test3.3 |> arrange(merror)
+best.par3.3 <- best.par3.3[1,]
+
+## The best combination is the one of the best.par3.3
+
+param.3 <- list(
+  num_class = 5, 
+  booster = "gbtree",
+  eta = .4,
+  max_depth = 9,
+  min_child_weight = 1,
+  alpha = 0,
+  lambda = 1,
+  gamma = 0,
+  objective = "multi:softmax",
+  eval_metric = "merror"
+)
+
+## Training the final model
+
+final.model.all.fit <- xgboost(
+  data = xgb.training.features.3, 
+  params = param.3, 
+  nrounds = 134, 
+  verbose = 1)
+
+## Importance of variables
+
+vip(final.model.all.fit) + 
+  theme_tq() +
+  theme(panel.grid = element_blank())
+
+xgb.importance(model = final.model.all.fit)
+
+xgb.ggplot.deepness(model = final.model.all.fit)
+
+## Validation writing the testing set
+
+xgb.testing.features.3 <- xgb.DMatrix(data = as.matrix(baked.testing.3[, -12]))
+setinfo(object = xgb.testing.features.3, name = 'label', 
+        info = as.numeric(as.data.frame(baked.testing.3)[, 12]) - 1)
+
+final.model.all.validation.fit <- 
+  predict(object = final.model.all.fit,
+          newdata = xgb.testing.features.3)
+
+## Generating a confusion matrix
+
+Real.3 <- as.character(baked.testing.3$Primary.Lifestyle)
+
+Predicted.3 <- as.factor(final.model.all.validation.fit)
+
+levels(Predicted.3) <- levels(baked.testing.3$Primary.Lifestyle)
+
+Tabulation.3 <- table(Predicted.3, Real.3)
+
+cM.3 <- confusionMatrix(Tabulation.3)
+
+cM.3.perc <- cm.perc(cM.3)
+
+heatmap.2(cM.3.perc, 
+          Rowv = F, 
+          Colv = F, 
+          dendrogram = "none", 
+          col = brewer_pal("seq"), 
+          trace = "none", 
+          breaks = 9, 
+          tracecol = "green", 
+          margins = c(6, 6), 
+          cellnote = round(cM.3.perc, 2), 
+          notecol = "black", cexRow = 1, cexCol = 1, 
+          keysize = 2, density.info = "none", key = F)
+
+## *****************************************************************************
+## 8) Classical approaches ----
+## _____________________________________________________________________________
+
+LJMR.print_classical <- recipe(Primary.Lifestyle ~ Beak.Length_Culmen + 
+                                 Beak.Length_Nares + Beak.Width + Beak.Depth + 
+                                 Tarsus.Length + Wing.Length + 
+                                 Kipps.Distance + Secondary1 + `Hand-Wing.Index` + 
+                                 Tail.Length + Mass, data = Data) |>
+  step_center(all_numeric()) |>
+  step_scale(all_numeric())
+
+prepare_classical <- prep(LJMR.print_classical, training = Training)
+
+baked.training_classical <- bake(prepare_classical, new_data = Training)
+
+baked.testing_classical <- bake(prepare_classical, new_data = Testing)
+
+## |¬ Multinomial logistic regression ----
+
+hyper_grid_multinom <- expand.grid(decay = c(0, 0.0000004, 0.0000005, 0.0000006,
+                                             0.0000007, 0.0000008, 0.0000009,
+                                             0.000001, 0.000005, 0.00001),
+                                   AIC = 0)
+
+par.selector.classical <- function(hyper_grid, data, response)
+{
+  for(i in seq_len(nrow(hyper_grid)))
+  {
+    m <- multinom(data[, response] ~ ., data = data, 
+                         Hess = T, 
+                         maxit = 10000,
+                  decay = hyper_grid[i, "decay"])
+    
+    hyper_grid$AIC[i] <- m$AIC
+  }
+  
+  hyper_grid
+}
+
+test.mult <- par.selector.classical(hyper_grid = hyper_grid_multinom, 
+                                    data = 
+                                      as.data.frame(baked.training_classical), 
+                                    response = 12)
+
+# The best value for the decay parameter was 0, the default.
+
+Multinom_model <- multinom(Primary.Lifestyle ~ ., baked.training_classical, 
+                           Hess = T, maxit = 10000, decay = 0)
+
+summary(Multinom_model)
+
+Multinom_model_predictions <- predict(object = Multinom_model, 
+                                      newdata = baked.testing_classical)
+
+Multinom_cM <- confusionMatrix(Multinom_model_predictions, 
+                               baked.testing_classical$Primary.Lifestyle)
+
+## |¬ Linear Discriminant Analysis ----
+
+LDA_model <- lda(Primary.Lifestyle ~ ., baked.training_classical)
+
+summary(LDA_model)
+
+LDA_model_predictions <- predict(object = LDA_model, 
+                                 newdata = baked.testing_classical)
+
+LDA_cM <- confusionMatrix(LDA_model_predictions$class, 
+                          baked.testing_classical$Primary.Lifestyle)
+
+# Classical approaches perform poorly in comparison with the machine learning
+# algorithm.
+
+## 9) Decomposing the Generalist group in natural clusters ----
+
+Generalist <- Data |> filter(Primary.Lifestyle == "Generalist")
+
+best.k <- NbClust(data = Generalist[, -1], distance = "euclidean", min.nc = 2, 
+                  max.nc = 15, method = "kmeans")
+
+## Best number of cluster: 3
+
+Natural.Cluster.G <- kmeans(x = Generalist[, -1], centers = 3, 
+                            iter.max = 10000, nstart = 20, 
+                            algorithm = "Hartigan-Wong")
+
+## 10) Running the machine learning algorithm generalists divided ----
+
+Data.after.k <- Data
+
+new.names <- Natural.Cluster.G$cluster
+
+for (i in 1:length(new.names)) 
+{
+  if(new.names[i] == 1) new.names[i] <- "Generalist 1"
+  if(new.names[i] == 2) new.names[i] <- "Generalist 2"
+  if(new.names[i] == 3) new.names[i] <- "Generalist 3"
+}
+
+Data.after.k <- mutate(Data.after.k, 
+                       Primary.Lifestyle = as.character(Primary.Lifestyle))
+
+Data.after.k[Data.after.k$Primary.Lifestyle == "Generalist", 
+             "Primary.Lifestyle"] <- new.names
+
+Data.after.k <- mutate(Data.after.k, 
+                       Primary.Lifestyle = as.factor(Primary.Lifestyle))
+
+## |¬ Splitting the data set in Training and Testing after k clustering ----
+
+set.seed(1998) ## For replicability
+
+split.after.k <- initial_split(data = Data.after.k, 
+                       prop = .7, strata = Primary.Lifestyle)
+
+Training.k <- training(split.after.k)
+
+Testing.k <- testing(split.after.k)
+
+## |¬ Building the third model with 7 possible levels for the response ----
+
+LJMR.print.4 <- recipe(Primary.Lifestyle ~ Beak.Length_Culmen + 
+                         Beak.Length_Nares + Beak.Width + Beak.Depth + 
+                         Tarsus.Length + Wing.Length + 
+                         Kipps.Distance + Secondary1 + `Hand-Wing.Index` + 
+                         Tail.Length + Mass, data = Data.after.k) |>
+  step_center(all_numeric()) |>
+  step_scale(all_numeric())
+
+prepare.4 <- prep(LJMR.print.4, training = Training.k)
+
+baked.training.4 <- bake(prepare.4, new_data = Training.k)
+
+baked.testing.4 <- bake(prepare.4, new_data = Testing.k)
+
+## |¬ Modelling step ----
+
+## 10.1) Working with all variables ----
+
+## |¬ Defining a extreme gradient boosting model of classification (all)
+
+xgb.training.features.4 <- xgb.DMatrix(data = as.matrix(baked.training.4[, -12]))
+setinfo(object = xgb.training.features.4, name = 'label', 
+        info = as.numeric(as.data.frame(baked.training.4)[, 12]) - 1)
+
+## Selecting the best hyperparameters (1)
+
+hyper_grid1.4 <-  expand.grid(num_class = 7, booster = "gbtree",
+                              eta = c(.1, .2, .4, .6, .8),
+                              max_depth = c(2, 4, 6, 8, 10),
+                              min_child_weight = c(.1, .5, 1, 2, 4),
+                              alpha = 0,
+                              lambda = 0,
+                              gamma = 0,
+                              objective = "multi:softmax",
+                              merror = 0,
+                              trees = 0)
+
+test.4 <- par.selector(hyper_grid = hyper_grid1.4, 
+                       data = xgb.training.features.4)
+
+best.par1.4 <- test.4 |> arrange(merror)
+best.par1.4 <- best.par1.4[1,]
+
+## Tuning and selecting the best hyperparameters (2)
+
+hyper_grid2.4 <-  expand.grid(num_class = 7, booster = "gbtree",
+                              eta = best.par1.4[, "eta"],
+                              max_depth = best.par1.4[, "max_depth"],
+                              min_child_weight = 
+                                best.par1.4[, "min_child_weight"],
+                              alpha = c(0, 1, 10, 100),
+                              lambda = c(0, .01, 1, 100, 1000),
+                              gamma = c(0, .01, 1, 100, 1000),
+                              objective = "multi:softmax",
+                              merror = 0,
+                              trees = 0)
+
+test2.4 <- par.selector(hyper_grid = hyper_grid2.4, 
+                        data = xgb.training.features.4)
+
+best.par2.4 <- test2.4 |> arrange(merror)
+best.par2.4 <- best.par2.4[1,]
+
+## Tuning and selecting the best hyperparameters (3)
+
+hyper_grid3.4 <-  expand.grid(num_class = 7, booster = "gbtree",
+                              eta = best.par2.4[, "eta"],
+                              max_depth = best.par2.4[, "max_depth"],
+                              min_child_weight = 
+                                best.par2.4[, "min_child_weight"],
+                              alpha = best.par2.4[, "alpha"],
+                              lambda = best.par2.4[, "lambda"],
+                              gamma = best.par2.4[, "gamma"],
+                              objective = "multi:softmax",
+                              merror = 0,
+                              trees = 0)
+
+test3.4 <- par.selector(hyper_grid = hyper_grid3.4, 
+                        data = xgb.training.features.4)
+
+best.par3.4 <- test3.4 |> arrange(merror)
+best.par3.4 <- best.par3.4[1,]
+
+## The best combination is the one of the best.par1.4
+
+param.4 <- list(
+  num_class = 7, 
+  booster = "gbtree",
+  eta = .1,
+  max_depth = 8,
+  min_child_weight = .1,
+  alpha = 0,
+  lambda = 0,
+  gamma = 0,
+  objective = "multi:softmax",
+  eval_metric = "merror"
+)
+
+## Training the final model
+
+final.model.all.fit.afterK <- xgboost(
+  data = xgb.training.features.4, 
+  params = param.4, 
+  nrounds = 4000, 
+  verbose = 1, early_stopping_rounds = 200)
+
+## Importance of variables
+
+vip(final.model.all.fit.afterK) + 
+  theme_tq() +
+  theme(panel.grid = element_blank())
+
+xgb.importance(model = final.model.all.fit.afterK)
+
+xgb.ggplot.deepness(model = final.model.all.fit.afterK)
+
+## Validation writing the testing set
+
+xgb.testing.features.4 <- xgb.DMatrix(data = as.matrix(baked.testing.4[, -12]))
+setinfo(object = xgb.testing.features.4, name = 'label', 
+        info = as.numeric(as.data.frame(baked.testing.4)[, 12]) - 1)
+
+final.model.all.validation.fit.afterK <- 
+  predict(object = final.model.all.fit.afterK,
+          newdata = xgb.testing.features.4)
+
+## Generating a confusion matrix
+
+Real.4 <- as.character(baked.testing.4$Primary.Lifestyle)
+
+Predicted.4 <- as.factor(final.model.all.validation.fit.afterK)
+
+levels(Predicted.4) <- levels(baked.testing.4$Primary.Lifestyle)
+
+Tabulation.4 <- table(Predicted.4, Real.4)
+
+cM.4 <- confusionMatrix(Tabulation.4)
+
+cM.4.perc <- cm.perc(cM.4)
+
+heatmap.2(cM.4.perc, 
+          Rowv = F, 
+          Colv = F, 
+          dendrogram = "none", 
+          col = brewer_pal("seq"), 
+          trace = "none", 
+          breaks = 9, 
+          tracecol = "green", 
+          margins = c(6, 6), 
+          cellnote = round(cM.4.perc, 2), 
+          notecol = "black", cexRow = 1, cexCol = 1, 
+          keysize = 2, density.info = "none", key = F)
+
+## There is no improvement with the splitting of the generalist category.
