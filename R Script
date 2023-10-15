@@ -588,7 +588,7 @@ heatmap.2(cM.perc,
 
 ## Correlation between centered and scaled predictors in training set ----
 
-cor <- correlate(as.data.frame(baked.training.2[, -1]), 
+cor <- correlate(as.data.frame(baked.training.2[, -12]), 
                  method = "spearman")
 
 cor  |> shave() |> rplot() + 
@@ -628,11 +628,13 @@ h.corr.p <- significative.pairs(corrr.out = cor, umbral = .9)
 
 ## Removing one of the correlated varaible in each pair
 
-baked.testing.2 <- dplyr::select(baked.testing.2, !c(Secondary1, 
+baked.testing.2 <- dplyr::select(baked.testing.2, !c(Beak.Length_Culmen,
+                                                     Secondary1, 
                                                      Wing.Length, 
                                                      Beak.Width))
 
-baked.training.2 <- dplyr::select(baked.training.2, !c(Secondary1, 
+baked.training.2 <- dplyr::select(baked.training.2, !c(Beak.Length_Culmen,
+                                                       Secondary1, 
                                                        Wing.Length, 
                                                        Beak.Width))
 
