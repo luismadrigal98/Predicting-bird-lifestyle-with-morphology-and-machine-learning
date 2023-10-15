@@ -640,9 +640,9 @@ baked.training.2 <- dplyr::select(baked.training.2, !c(Beak.Length_Culmen,
 
 ## |¬ Defining a extreme gradient boosting model of classification (- correlated)
 
-xgb.training.features.2 <- xgb.DMatrix(data = as.matrix(baked.training.2[,-9]))
+xgb.training.features.2 <- xgb.DMatrix(data = as.matrix(baked.training.2[,-8]))
 setinfo(object = xgb.training.features.2, name = 'label', 
-        info = as.numeric(as.data.frame(baked.training.2)[, 9]) - 1)
+        info = as.numeric(as.data.frame(baked.training.2)[, 8]) - 1)
 
 ## Selecting the best hyperparameters (1)
 
