@@ -764,7 +764,7 @@ heatmap.2(cM.2.perc,
           dendrogram = "none", 
           col = brewer_pal("seq"), 
           trace = "none", 
-          breaks = 9, 
+          breaks = 10, 
           tracecol = "green", 
           margins = c(6, 6), 
           cellnote = round(cM.2.perc, 2), 
@@ -857,7 +857,7 @@ param.3 <- list(
 final.model.all.fit <- xgboost(
   data = xgb.training.features.3, 
   params = param.3, 
-  nrounds = 134, 
+  nrounds = 4000, 
   verbose = 1)
 
 ## Importance of variables
@@ -900,7 +900,7 @@ heatmap.2(cM.3.perc,
           dendrogram = "none", 
           col = brewer_pal("seq"), 
           trace = "none", 
-          breaks = 9, 
+          breaks = 10, 
           tracecol = "green", 
           margins = c(6, 6), 
           cellnote = round(cM.3.perc, 2), 
